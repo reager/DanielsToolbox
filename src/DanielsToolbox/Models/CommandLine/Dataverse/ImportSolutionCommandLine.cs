@@ -102,7 +102,7 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
                 {
                     importJob = new ImportJob(importJobEntity);
 
-                    var currentProgress = importJob.Progress;
+                    var currentProgress = Math.Round(importJob.Progress, 2);
 
                     PrintProgress(displayProgressBar, pbar, $"{currentProgress}%");
 
