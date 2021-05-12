@@ -14,6 +14,7 @@ using System.Threading;
 using DanielsToolbox.Extensions;
 using System.CommandLine.Invocation;
 using ShellProgressBar;
+using System.Runtime.CompilerServices;
 
 namespace DanielsToolbox.Models.CommandLine.Dataverse
 {
@@ -21,12 +22,16 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
     {
         public DataverseServicePrincipalCommandLine DataverseServicePrincipalCommandLine { get; set; }
 
-        public FileInfo PathToZipFile { get; init; }
+        public bool DisplayProgressBar { get; init; }
 
+        public bool PublishChanges { get; init; }
+        public FileInfo PathToZipFile { get; init; }
         public static IEnumerable<Symbol> Arguments()
-            => new[]
+            => new Symbol[]
             {
-                new Option<FileInfo>("--path-to-zip-file")
+                new Option<FileInfo>("--path-to-zip-file"),
+                new Option<bool>("--display-progress-bar"),
+                new Option<bool>("--publish-changes", getDefaultValue: () => true)
             };
 
         public static Command Create()
@@ -42,7 +47,7 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
             return command;
         }
 
-        public static void ImportAsyncAndWaitWithProgress(ServiceClient client, string solutionZipPath)
+        public static void ImportAsyncAndWaitWithProgress(ServiceClient client, string solutionZipPath, bool publishChanges, bool displayProgressBar)
         {
             var asyncOperationId = client.ImportSolutionAsync(solutionZipPath, out Guid importJobId);
 
@@ -56,19 +61,28 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
             {
 
             };
+
             using (var pbar = new ProgressBar(100 * 100, "Importing solution", options))
             {
-                WaitForAsyncOperationToComplete(importJobId, asyncOperationId, client, pbar);
+                WaitForAsyncOperationToComplete(importJobId, asyncOperationId, client, pbar, displayProgressBar);
 
-                pbar.Tick("Publishing changes!");
+                PrintProgress(displayProgressBar, pbar, "Changes successfully imported");
 
-                client.Execute(new PublishAllXmlRequest());
+                if (publishChanges)
+                {
+                    PrintProgress(displayProgressBar, pbar, "Publishing changes!");
 
-                pbar.Tick(100 * 100, "Changes successfully imported!");
+                    client.Execute(new PublishAllXmlRequest());
+
+                    PrintProgress(displayProgressBar, pbar, "Changes successfully published!");
+                }
+
+                pbar.Tick(100 * 100);
+
             }
         }
 
-        public static void WaitForAsyncOperationToComplete(Guid importJobId, Guid asyncOperationId, ServiceClient client, ProgressBar pbar)
+        public static void WaitForAsyncOperationToComplete(Guid importJobId, Guid asyncOperationId, ServiceClient client, ProgressBar pbar, bool displayProgressBar)
         {
             ImportJob importJob = null;
             Entity importJobEntity;
@@ -88,7 +102,11 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
                 {
                     importJob = new ImportJob(importJobEntity);
 
-                    pbar.Tick((int)importJob.Progress * 100 - 5);
+                    var currentProgress = Math.Round(importJob.Progress, 2);
+
+                    PrintProgress(displayProgressBar, pbar, $"{currentProgress}%");
+
+                    pbar.Tick((int)currentProgress * 100);
 
                     if (importJob.IsCompleted() == false)
                     {
@@ -133,10 +151,12 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
         {
             ServiceClient client = DataverseServicePrincipalCommandLine.Connect();
 
-            ImportAsyncAndWaitWithProgress(client, PathToZipFile.FullName);
+            ImportAsyncAndWaitWithProgress(client, PathToZipFile.FullName, PublishChanges, DisplayProgressBar);
         }
+
         public void Import()
             => Import(PathToZipFile);
+
         private static bool IsNotNull(ref int numberOfNulls, Entity importJob, Guid importJobId)
         {
             if (numberOfNulls <= 10)
@@ -156,6 +176,13 @@ namespace DanielsToolbox.Models.CommandLine.Dataverse
             {
                 throw new Exception("Kunde inte hitta ett importjob med id " + importJobId);
             }
+        }
+
+        private static void PrintProgress(bool displayProgressBar, ProgressBar progressBar, string message)
+        {
+            Action<string> printer = displayProgressBar ? progressBar.WriteLine : Console.WriteLine;
+
+            printer(message);
         }
     }
 }
